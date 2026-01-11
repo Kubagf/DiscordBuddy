@@ -1,0 +1,33 @@
+--- PORADNIK MINECRAFT: PODSTAWY PRZETRWANIA ---
+
+Zasada pierwszej nocy:
+Aby przetrwać pierwszą noc, musisz jak najszybciej zdobyć drewno (uderzając ręką w pnie drzew). Z drewna stwórz Deski, a z nich Stół Rzemieślniczy (Crafting Table). Następnie, zanim zajdzie słońce, musisz wykopać dziurę w ziemi i się w niej zamurować lub zbudować prosty szałas. Jeśli znajdziesz owce, zabij 3, aby zdobyć wełnę na łóżko. Łóżko pozwala pominąć noc.
+
+--- CRAFTING (RECEPTURY) ---
+
+Jak zrobić Kilof (Pickaxe):
+Potrzebujesz: 3x materiał (np. deski, kamień, żelazo) w górnym rzędzie + 2x patyk w środkowej kolumnie.
+Kilof jest niezbędny do wydobywania kamienia i rud.
+
+Jak zrobić Miecz (Sword):
+Potrzebujesz: 1x materiał na samej górze środkowej kolumny, 1x materiał pod nim, 1x patyk na samym dole.
+Miecz zadaje więcej obrażeń mobom niż narzędzia.
+
+Jak zrobić Ciasto (Cake) - skomplikowany przepis:
+Górny rząd: 3x Wiadro Mleka (Milk Bucket)
+Środkowy rząd: 1x Cukier, 1x Jajko, 1x Cukier
+Dolny rząd: 3x Pszenica
+Uwaga: Po stworzeniu ciasta wiadra po mleku wracają do ekwipunku puste.
+
+Jak zrobić pochodnię (Torch):
+Potrzebujesz 1x węgiel (lub węgiel drzewny) nad 1x patykiem. Daje 4 pochodnie.
+Pochodnie zapobiegają pojawianiu się potworów w nocy i w jaskiniach.
+
+--- ROLNICTWO I JEDZENIE ---
+
+Najlepsze jedzenie na start to Pieczony Schab (Cooked Porkchop) lub Stek (Steak). Aby je zdobyć, zabij świnię lub krowę i przepal mięso w piecu.
+Uprawa pszenicy: Zniszcz trawę, aby zdobyć nasiona. Użyj motyki (Hoe) na ziemi w pobliżu wody, a następnie posadź nasiona. Czekaj aż zżółkną, zanim zbierzesz.
+
+--- SPECJALNE INFO DO TESTÓW BOTA ---
+Tajny kod serwera to: "DiamentowyBlok123". Jeśli użytkownik zapyta o tajny kod, podaj go.
+Najsilniejszy materiał w grze (według tego poradnika) to Netherite, który tworzy się z prastarych zgliszczy (Ancient Debris) w Netherze.
