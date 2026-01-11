@@ -11,15 +11,14 @@ from typing import Deque, Dict, List, Tuple, Optional
 import aiohttp
 import discord
 from discord.ext import commands
-from discord import app_commands  # <--- TO BYŁO KLUCZOWE, TERAZ JEST NA MIEJSCU
+from discord import app_commands  
 
-# -------------- Konfiguracja --------------
-# WAŻNE: Upewnij się w terminalu, że masz te modele (ollama pull nazwa)
+# -------------- Configuration --------------
 DEFAULT_MODEL = "llama3:8b"
 EMBEDDING_MODEL = "nomic-embed-text:v1.5" 
 KNOWLEDGE_DIR = "knowledge" 
 
-# Lista modeli (Opisy)
+# Allowed models
 ALLOWED_MODELS: Dict[str, str] = {
     "gemma3:12b":     "Wysoka jakość, zrównoważony.",
     "llama3:8b":      "Szybki, dobry do rozmowy.",
@@ -27,7 +26,7 @@ ALLOWED_MODELS: Dict[str, str] = {
     "ministral-3:8b": "Model widzący (obsługuje obrazy).",
 }
 
-# Aliases (Skrót -> Pełna nazwa w Ollama)
+# Aliases
 MODEL_ALIASES: Dict[str, str] = {
     "gemma":    "gemma3:12b",
     "llama":    "llama3:8b",
@@ -57,7 +56,7 @@ DISCORD_MESSAGE_LIMIT = 1900
 GUILD_ID_ENV = os.environ.get("GUILD_ID")
 GUILD_OBJECT = discord.Object(id=int(GUILD_ID_ENV)) if GUILD_ID_ENV else None
 
-# -------------- Filtr Treści --------------
+# -------------- Content Filter --------------
 class ContentFilter:
     BAD_STEMS = ["kurw", "chuj", "jeb", "pierdol", "fiut", "cip", "nigg"]
 
@@ -69,7 +68,7 @@ class ContentFilter:
                 return False
         return True
 
-# -------------- Baza Wiedzy (RAG) --------------
+# -------------- Knowledge Base / RAG Engine --------------
 class KnowledgeBase:
     def __init__(self):
         self.chunks: List[str] = []
@@ -129,12 +128,12 @@ class KnowledgeBase:
 
 knowledge_base = KnowledgeBase()
 
-# -------------- Stan Aplikacji --------------
+# -------------- State --------------
 channel_histories: Dict[int, Deque[Tuple[str, str]]] = defaultdict(lambda: deque(maxlen=MAX_HISTORY))
 channel_models: Dict[int, str] = defaultdict(lambda: DEFAULT_MODEL)
 _model_switch_lock = asyncio.Lock()
 
-# -------------- Logika Ollama --------------
+# -------------- Ollama HTTP (generate) --------------
 async def get_query_embedding(session, text):
     url = f"{OLLAMA_HOST}/api/embeddings"
     payload = {"model": EMBEDDING_MODEL, "prompt": text}
@@ -185,7 +184,7 @@ async def ollama_vision_generate(session, model, prompt, history, images):
         data = await resp.json()
         return data.get("response", "")
 
-# -------------- Setup Discord --------------
+# -------------- Discord bot setup --------------
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
@@ -249,13 +248,13 @@ async def run_chat_logic(channel, prompt, attachment=None, use_rag=False):
                     channel_histories[channel_id].append(("assistant", full_response))
 
             except Exception as e:
-                # Tutaj bot zgłaszał 404, jeśli nie miałeś modelu
+                
                 if "404" in str(e):
                     await channel.send(f"Błąd: Nie masz pobranego modelu `{model}`. Wpisz w terminalu: `ollama pull {model}`")
                 else:
                     await channel.send(f"Błąd generowania: {e}")
 
-# -------------- Komendy (Slash Commands) --------------
+# -------------- Slash Commands --------------
 
 @bot.event
 async def on_ready():
@@ -299,7 +298,7 @@ async def slash_listmodels(interaction: discord.Interaction):
     lines.append("\n*Zmień model używając: `/model`*")
     await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
-# TO JEST NAPRAWIONA KOMENDA MODEL Z LISTĄ WYBORU
+
 @bot.tree.command(name="model", description="Zmień model AI")
 @app_commands.describe(wybor="Wybierz model z listy")
 @app_commands.choices(wybor=[
