@@ -2,8 +2,6 @@ import os
 import json
 import base64
 import asyncio
-import mimetypes
-import math
 import re
 from collections import defaultdict, deque
 from typing import Deque, Dict, List, Tuple, Optional
@@ -11,12 +9,12 @@ from typing import Deque, Dict, List, Tuple, Optional
 import aiohttp
 import discord
 from discord.ext import commands
-from discord import app_commands  
+from discord import app_commands
 
 # -------------- Configuration --------------
 DEFAULT_MODEL = "llama3:8b"
-EMBEDDING_MODEL = "nomic-embed-text:v1.5" 
-KNOWLEDGE_DIR = "knowledge" 
+EMBEDDING_MODEL = "nomic-embed-text:v1.5"
+KNOWLEDGE_DIR = "knowledge"
 
 # Allowed models
 ALLOWED_MODELS: Dict[str, str] = {
@@ -28,17 +26,16 @@ ALLOWED_MODELS: Dict[str, str] = {
 
 # Aliases
 MODEL_ALIASES: Dict[str, str] = {
-    "gemma":    "gemma3:12b",
-    "llama":    "llama3:8b",
-    "deepseek": "deepseek-r1:8b",
-    "ministral":"ministral-3:8b",
+    "gemma":     "gemma3:12b",
+    "llama":     "llama3:8b",
+    "deepseek":  "deepseek-r1:8b",
+    "ministral": "ministral-3:8b",
 }
 
 VISION_MODELS = {"ministral-3:8b"}
 VISION_SUGGESTED_MODEL = "ministral-3:8b"
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
-
 
 SYSTEM_PROMPT = (
     "Jesteś pomocnym asystentem AI. Masz dostęp do fragmentów BAZY WIEDZY (Kontekst), która jest w folderze knowledge. "
@@ -53,6 +50,7 @@ SYSTEM_PROMPT = (
 
 MAX_HISTORY = 8
 DISCORD_MESSAGE_LIMIT = 1900
+
 GUILD_ID_ENV = os.environ.get("GUILD_ID")
 GUILD_OBJECT = discord.Object(id=int(GUILD_ID_ENV)) if GUILD_ID_ENV else None
 
@@ -84,7 +82,7 @@ class KnowledgeBase:
         print("Indexing knowledge base...")
         self.chunks = []
         self.embeddings = []
-        
+
         for filename in os.listdir(directory):
             if filename.endswith(".txt"):
                 path = os.path.join(directory, filename)
@@ -92,12 +90,12 @@ class KnowledgeBase:
                     text = f.read()
                     raw_chunks = [c.strip() for c in text.split("\n\n") if c.strip()]
                     self.chunks.extend(raw_chunks)
-        
+
         for chunk in self.chunks:
             emb = await self._fetch_embedding(session, chunk)
             if emb:
                 self.embeddings.append(emb)
-        
+
         self.loaded = True
         print(f"Knowledge base loaded: {len(self.chunks)} chunks.")
 
@@ -106,22 +104,23 @@ class KnowledgeBase:
         payload = {"model": EMBEDDING_MODEL, "prompt": text}
         try:
             async with session.post(url, json=payload) as resp:
-                if resp.status != 200: return None
+                if resp.status != 200:
+                    return None
                 data = await resp.json()
                 return data.get("embedding")
         except Exception as e:
             print(f"Embedding error: {e}")
             return None
 
-    def find_relevant(self, query_embedding: List[float], top_k=4) -> str:
-        if not self.loaded or not self.embeddings:
+    def find_relevant(self, query_embedding: List[float], top_k: int = 4) -> str:
+        if (not self.loaded) or (not self.embeddings):
             return ""
-        
+
         scores = []
         for i, emb in enumerate(self.embeddings):
             dot_product = sum(a * b for a, b in zip(query_embedding, emb))
             scores.append((dot_product, i))
-        
+
         scores.sort(key=lambda x: x[0], reverse=True)
         best_indices = [idx for _, idx in scores[:top_k]]
         return "\n---\n".join([self.chunks[i] for i in best_indices])
@@ -133,8 +132,64 @@ channel_histories: Dict[int, Deque[Tuple[str, str]]] = defaultdict(lambda: deque
 channel_models: Dict[int, str] = defaultdict(lambda: DEFAULT_MODEL)
 _model_switch_lock = asyncio.Lock()
 
-# -------------- Ollama HTTP (generate) --------------
-async def get_query_embedding(session, text):
+# -------------- Helpers (Discord chunking) --------------
+def split_for_discord(text: str, limit: int = DISCORD_MESSAGE_LIMIT) -> List[str]:
+    if not text:
+        return []
+
+    text = text.replace("\r\n", "\n")
+    parts: List[str] = []
+    i = 0
+
+    while i < len(text):
+        end = min(i + limit, len(text))
+
+        if end == len(text):
+            parts.append(text[i:end])
+            break
+
+        cut = text.rfind("\n", i, end)
+        if cut == -1:
+            cut = text.rfind(" ", i, end)
+
+        if (cut == -1) or (cut <= i + 20):
+            cut = end
+
+        parts.append(text[i:cut].rstrip())
+        i = cut
+
+        # pomiń białe znaki po cięciu
+        while (i < len(text)) and (text[i] == "\n" or text[i] == " "):
+            i += 1
+
+    return parts
+
+async def send_chunked_channel(channel: discord.abc.Messageable, text: str) -> None:
+    parts = split_for_discord(text)
+    for part in parts:
+        await channel.send(part)
+
+async def send_chunked_interaction(interaction: discord.Interaction, text: str, ephemeral: bool = False) -> None:
+    parts = split_for_discord(text)
+    if not parts:
+        await interaction.edit_original_response(content="(brak odpowiedzi)")
+        return
+
+    await interaction.edit_original_response(content=parts[0])
+    for part in parts[1:]:
+        await interaction.followup.send(part, ephemeral=ephemeral)
+
+
+def get_context_key(interaction: discord.Interaction) -> int:
+    if interaction.channel_id is not None:
+        return int(interaction.channel_id)
+    if interaction.channel is not None and hasattr(interaction.channel, "id"):
+        return int(interaction.channel.id)
+    if interaction.user is not None:
+        return int(interaction.user.id)
+    return 0
+
+async def get_query_embedding(session: aiohttp.ClientSession, text: str) -> Optional[List[float]]:
     url = f"{OLLAMA_HOST}/api/embeddings"
     payload = {"model": EMBEDDING_MODEL, "prompt": text}
     async with session.post(url, json=payload) as resp:
@@ -143,7 +198,13 @@ async def get_query_embedding(session, text):
             return data.get("embedding")
     return None
 
-async def ollama_stream_generate(session, model, prompt, history, context=""):
+async def ollama_stream_generate(
+    session: aiohttp.ClientSession,
+    model: str,
+    prompt: str,
+    history: Deque[Tuple[str, str]],
+    context: str = ""
+):
     system_msg = SYSTEM_PROMPT
     if context:
         system_msg += f"\n\nCONTEXT INFORMATION:\n{context}\n"
@@ -153,7 +214,7 @@ async def ollama_stream_generate(session, model, prompt, history, context=""):
         lines.append(f"[{role.capitalize()}]: {content}")
     lines.append(f"[User]: {prompt}")
     lines.append("[Assistant]:")
-    
+
     full_prompt = "\n".join(lines)
     payload = {"model": model, "prompt": full_prompt, "stream": True}
     url = f"{OLLAMA_HOST}/api/generate"
@@ -161,100 +222,105 @@ async def ollama_stream_generate(session, model, prompt, history, context=""):
     async with session.post(url, json=payload) as resp:
         resp.raise_for_status()
         async for raw in resp.content:
-            if not raw: continue
+            if not raw:
+                continue
             try:
                 obj = json.loads(raw.decode("utf-8"))
                 yield obj.get("response", "")
-                if obj.get("done"): break
-            except: pass
+                if obj.get("done"):
+                    break
+            except Exception:
+                pass
 
-async def ollama_vision_generate(session, model, prompt, history, images):
+async def ollama_vision_generate(
+    session: aiohttp.ClientSession,
+    model: str,
+    prompt: str,
+    history: Deque[Tuple[str, str]],
+    images: List[bytes]
+) -> str:
     lines = [f"[System]: {SYSTEM_PROMPT}"]
     for role, content in history:
         lines.append(f"[{role}]: {content}")
     lines.append(f"[User]: {prompt}")
-    
+
     payload = {
         "model": model,
         "prompt": "\n".join(lines),
-        "images": [base64.b64encode(img).decode('ascii') for img in images],
+        "images": [base64.b64encode(img).decode("ascii") for img in images],
         "stream": False
     }
     async with session.post(f"{OLLAMA_HOST}/api/generate", json=payload) as resp:
         data = await resp.json()
         return data.get("response", "")
 
-# -------------- Discord bot setup --------------
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+# -------------- Core chat logic --------------
+async def generate_response(
+    channel_id: int,
+    prompt: str,
+    attachment: Optional[discord.Attachment] = None,
+    use_rag: bool = False
+) -> str:
 
-async def send_chunked(channel, text):
-    if not text: return
-    for i in range(0, len(text), DISCORD_MESSAGE_LIMIT):
-        await channel.send(text[i:i+DISCORD_MESSAGE_LIMIT])
-
-async def run_chat_logic(channel, prompt, attachment=None, use_rag=False):
-    channel_id = channel.id
-    
     if not ContentFilter.is_safe(prompt):
-        await channel.send("Wiadomość zablokowana przez filtr bezpieczeństwa.")
-        return
+        return "Wiadomość zablokowana przez filtr bezpieczeństwa."
 
     model = channel_models[channel_id]
-    
-    async with channel.typing():
-        async with aiohttp.ClientSession() as session:
-            images = []
-            if attachment:
-                images.append(await attachment.read())
-            
-            if images:
-                if model not in VISION_MODELS:
-                    await channel.send(f"Model `{model}` nie obsługuje obrazów. Użyj `/model` i wybierz Ministral.")
-                else:
-                    try:
-                        resp = await ollama_vision_generate(session, model, prompt, channel_histories[channel_id], images)
-                        await send_chunked(channel, resp)
-                        channel_histories[channel_id].append(("user", f"{prompt} [image]"))
-                        channel_histories[channel_id].append(("assistant", resp))
-                        return
-                    except Exception as e:
-                        await channel.send(f"Błąd wizji: {e}")
-                        return
 
-            context_data = ""
-            if use_rag and knowledge_base.loaded:
+    async with aiohttp.ClientSession() as session:
+        images: List[bytes] = []
+        if attachment is not None:
+            try:
+                images.append(await attachment.read())
+            except Exception as e:
+                return f"Nie udało się odczytać załącznika: {e}"
+
+        if images:
+            if model not in VISION_MODELS:
+                return f"Model `{model}` nie obsługuje obrazów. Użyj `/model` i wybierz `{VISION_SUGGESTED_MODEL}`."
+            try:
+                resp = await ollama_vision_generate(session, model, prompt, channel_histories[channel_id], images)
+                if not ContentFilter.is_safe(resp):
+                    return "Odpowiedź modelu została usunięta przez filtr (zawierała niedozwolone treści)."
+
+                channel_histories[channel_id].append(("user", f"{prompt} [image]"))
+                channel_histories[channel_id].append(("assistant", resp))
+                return resp
+            except Exception as e:
+                return f"Błąd wizji: {e}"
+
+        context_data = ""
+        if use_rag and knowledge_base.loaded:
+            try:
                 q_emb = await get_query_embedding(session, prompt)
                 if q_emb:
                     context_data = knowledge_base.find_relevant(q_emb)
-            
-            full_response = ""
-            buffer = ""
-            try:
-                async for chunk in ollama_stream_generate(session, model, prompt, channel_histories[channel_id], context_data):
-                    buffer += chunk
-                    full_response += chunk
-                    if len(buffer) > 400:
-                        await send_chunked(channel, buffer)
-                        buffer = ""
-                if buffer:
-                    await send_chunked(channel, buffer)
-                
-                if not ContentFilter.is_safe(full_response):
-                    await channel.send("Odpowiedź modelu została usunięta przez filtr (zawierała niedozwolone treści).")
-                else:
-                    channel_histories[channel_id].append(("user", prompt))
-                    channel_histories[channel_id].append(("assistant", full_response))
-
             except Exception as e:
-                
-                if "404" in str(e):
-                    await channel.send(f"Błąd: Nie masz pobranego modelu `{model}`. Wpisz w terminalu: `ollama pull {model}`")
-                else:
-                    await channel.send(f"Błąd generowania: {e}")
+                context_data = ""
+                print(f"RAG error: {e}")
 
-# -------------- Slash Commands --------------
+        full_response = ""
+        try:
+            async for chunk in ollama_stream_generate(session, model, prompt, channel_histories[channel_id], context_data):
+                full_response += chunk
+        except Exception as e:
+            if "404" in str(e):
+                return f"Błąd: Nie masz pobranego modelu `{model}`. Wpisz w terminalu: `ollama pull {model}`"
+            return f"Błąd generowania: {e}"
+
+        if not full_response:
+            return "(brak odpowiedzi)"
+
+        if not ContentFilter.is_safe(full_response):
+            return "Odpowiedź modelu została usunięta przez filtr (zawierała niedozwolone treści)."
+
+        channel_histories[channel_id].append(("user", prompt))
+        channel_histories[channel_id].append(("assistant", full_response))
+        return full_response
+
+intents = discord.Intents.default()
+intents.message_content = True
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 @bot.event
 async def on_ready():
@@ -265,25 +331,37 @@ async def on_ready():
         except Exception as e:
             print(f"Failed to load knowledge base: {e}")
 
-    await bot.tree.sync(guild=GUILD_OBJECT)
-    print("Commands synced (Ready).")
+    if GUILD_OBJECT is not None:
+        await bot.tree.sync(guild=GUILD_OBJECT)
+        print("Commands synced (guild).")
+    else:
+        await bot.tree.sync()
+        print("Commands synced (global).")
 
-@bot.tree.command(name="chat", description="Rozmowa z modelem (bez przeszukiwania bazy wiedzy)")
-async def slash_chat(interaction: discord.Interaction, message: str, image: Optional[discord.Attachment] = None):
+@bot.tree.command(name="chat", description="Luźna rozmowa (bez RAG). Opcjonalnie obraz (tylko Ministral).")
+@app_commands.describe(prompt="Twoja wiadomość", obraz="Opcjonalny obraz (tylko przy modelu Ministral)")
+async def slash_chat(interaction: discord.Interaction, prompt: str, obraz: Optional[discord.Attachment] = None):
+    # defer -> potem edit_original_response, żeby Discord zostawił ślad "używa /chat"
     await interaction.response.defer(thinking=True)
-    await run_chat_logic(interaction.channel, message, image, use_rag=False)
-    await interaction.delete_original_response()
+    channel_id = get_context_key(interaction)
+    resp = await generate_response(channel_id, prompt, attachment=obraz, use_rag=False)
+    await send_chunked_interaction(interaction, resp, ephemeral=False)
 
 @bot.tree.command(name="ask", description="Zadaj pytanie (korzysta z bazy wiedzy RAG)")
+@app_commands.describe(question="Twoje pytanie")
 async def slash_ask(interaction: discord.Interaction, question: str):
     await interaction.response.defer(thinking=True)
-    await run_chat_logic(interaction.channel, question, use_rag=True)
-    await interaction.edit_original_response(content="Przeszukano bazę wiedzy.")
+    channel_id = get_context_key(interaction)
+    resp = await generate_response(channel_id, question, attachment=None, use_rag=True)
+    await send_chunked_interaction(interaction, resp, ephemeral=False)
 
 @bot.tree.command(name="status", description="Pokazuje aktualnie używany model")
 async def slash_status(interaction: discord.Interaction):
-    current_model = channel_models[interaction.channel_id]
-    await interaction.response.send_message(f"Obecnie używany model to: **`{current_model}`**", ephemeral=True)
+    current_model = channel_models[get_context_key(interaction)]
+    await interaction.response.send_message(
+        f"Obecnie używany model to: **`{current_model}`**",
+        ephemeral=True
+    )
 
 @bot.tree.command(name="listmodels", description="Lista dostępnych modeli i ich skróty")
 async def slash_listmodels(interaction: discord.Interaction):
@@ -298,7 +376,6 @@ async def slash_listmodels(interaction: discord.Interaction):
     lines.append("\n*Zmień model używając: `/model`*")
     await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
-
 @bot.tree.command(name="model", description="Zmień model AI")
 @app_commands.describe(wybor="Wybierz model z listy")
 @app_commands.choices(wybor=[
@@ -310,33 +387,40 @@ async def slash_listmodels(interaction: discord.Interaction):
 async def slash_model(interaction: discord.Interaction, wybor: app_commands.Choice[str]):
     raw = wybor.value
     chosen = MODEL_ALIASES.get(raw, raw)
-    
+
     if chosen not in ALLOWED_MODELS:
-         await interaction.response.send_message(f"Błąd: {chosen} nie jest na liście ALLOWED_MODELS.", ephemeral=True)
-         return
+        await interaction.response.send_message(
+            f"Błąd: `{chosen}` nie jest na liście ALLOWED_MODELS.",
+            ephemeral=True
+        )
+        return
 
     async with _model_switch_lock:
-        channel_models[interaction.channel_id] = chosen
+        channel_models[get_context_key(interaction)] = chosen
         await interaction.response.send_message(f"Zmieniono model na: **`{chosen}`**", ephemeral=False)
 
 @bot.tree.command(name="help", description="Lista komend")
 async def slash_help(interaction: discord.Interaction):
-    msg = """**Dostępne komendy:**
-    🔹 `/chat [wiadomość] [obraz]` – Luźna rozmowa (obsługuje zdjęcia przy modelu Ministral).
-    🔹 `/ask [pytanie]` – Pytanie do bazy wiedzy (przeszuka Twoje pliki .txt).
-    🔹 `/model` – Zmiana modelu (Wybierz z listy: Llama, Gemma, DeepSeek, Ministral).
-    🔹 `/listmodels` – Pokaż szczegóły modeli.
-    🔹 `/status` – Sprawdź, jaki model jest teraz włączony.
-    🔹 `/reset` – Wyczyszczenie pamięci rozmowy.
-    """
+    msg = (
+        "**Dostępne komendy:**\n"
+        "• `/chat prompt [obraz]` – Luźna rozmowa (obraz tylko przy Ministral).\n"
+        "• `/ask question` – Pytanie do bazy wiedzy (RAG, Twoje pliki .txt).\n"
+        "• `/model` – Zmiana modelu (Llama/Gemma/DeepSeek/Ministral).\n"
+        "• `/listmodels` – Pokaż szczegóły modeli.\n"
+        "• `/status` – Sprawdź, jaki model jest teraz włączony.\n"
+        "• `/reset` – Wyczyść pamięć rozmowy w danym kanale.\n"
+    )
     await interaction.response.send_message(msg, ephemeral=True)
 
 @bot.tree.command(name="reset", description="Resetuje kontekst rozmowy")
 async def slash_reset(interaction: discord.Interaction):
-    channel_histories[interaction.channel_id].clear()
+    channel_histories[get_context_key(interaction)].clear()
     await interaction.response.send_message("Pamięć wyczyszczona.", ephemeral=False)
 
 # -------------- Start --------------
 if __name__ == "__main__":
-
-#    bot.run('')
+    DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
+    if not DISCORD_TOKEN:
+        print("Błąd: Brak tokena DISCORD_TOKEN w zmiennych środowiskowych.")
+    else:
+        bot.run(DISCORD_TOKEN)
