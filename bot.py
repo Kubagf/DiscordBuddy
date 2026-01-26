@@ -430,6 +430,8 @@ async def slash_reset(interaction: discord.Interaction):
 
 # -------------- Start --------------
 if __name__ == "__main__":
-
-
-    bot.run('')
+    DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
+    if not DISCORD_TOKEN:
+        print("Błąd: Nie ustawiono zmiennej środowiskowej DISCORD_TOKEN.")
+    else:
+        bot.run(DISCORD_TOKEN)
