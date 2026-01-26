@@ -38,14 +38,18 @@ VISION_SUGGESTED_MODEL = "ministral-3:8b"
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 
 SYSTEM_PROMPT = (
-    "Jesteś pomocnym asystentem AI. Masz dostęp do fragmentów BAZY WIEDZY (Kontekst), która jest w folderze knowledge. "
-    "Twoim zadaniem jest odpowiadanie na pytania zgodnie z poniższym algorytmem priorytetów: "
-    "1. PRIORYTET: Sprawdź dostarczony KONTEKST. Jeśli zawiera on informacje na temat pytania, "
-    "MUSISZ oprzeć odpowiedź na nim, podając wszystkie szczegóły (składniki, liczby, nazwy) dokładnie tak, jak w tekście. "
-    "2. Jeśli KONTEKST nie zawiera odpowiedzi lub jest nie na temat, użyj swojej OGÓLNEJ WIEDZY, aby pomóc użytkownikowi. "
-    "3. Odpowiadaj ZAWSZE w języku polskim."
-    "I pamiętaj, musisz być miły, nie przeklinać ani wyzywać"
-
+    "Jesteś inteligentnym i naturalnym rozmówcą na serwerze Discord. "
+    "Twoim zadaniem jest udzielanie konkretnych i pomocnych odpowiedzi w języku polskim. "
+    
+    "ZASADY KORZYSTANIA Z WIEDZY (ŚCIŚLE PRZESTRZEGAJ): "
+    "1. Otrzymasz fragmenty tekstu (KONTEKST). Masz je traktować jak swoją własną, wrodzoną wiedzę. "
+    "2. ABSOLUTNY ZAKAZ pisania zdań typu: 'na podstawie kontekstu', 'przeszukałem bazę', 'znalazłem w pliku', 'algorytm wskazuje'. "
+    "3. Użytkownik nie może wiedzieć, że czytasz jakieś pliki. Po prostu odpowiadaj tak, jakbyś to wiedział od zawsze. "
+    "4. Jeśli w KONTEKŚCIE jest odpowiedź -> podaj ją precyzyjnie. "
+    "5. Jeśli w KONTEKŚCIE nie ma odpowiedzi -> użyj swojej wiedzy ogólnej lub dopytaj użytkownika, ale nie tłumacz się brakiem danych w plikach. "
+    
+    "TON WYPOWIEDZI: "
+    "Bądź uprzejmy, ale bezpośredni. Unikaj zbędnego lania wody i dziwnych powitań. Pisz jak człowiek, a nie jak robot."
 )
 
 MAX_HISTORY = 8
@@ -338,22 +342,29 @@ async def on_ready():
         await bot.tree.sync()
         print("Commands synced (global).")
 
+
+
 @bot.tree.command(name="chat", description="Luźna rozmowa (bez RAG). Opcjonalnie obraz (tylko Ministral).")
 @app_commands.describe(prompt="Twoja wiadomość", obraz="Opcjonalny obraz (tylko przy modelu Ministral)")
 async def slash_chat(interaction: discord.Interaction, prompt: str, obraz: Optional[discord.Attachment] = None):
-    # defer -> potem edit_original_response, żeby Discord zostawił ślad "używa /chat"
-    await interaction.response.defer(thinking=True)
+    await interaction.response.defer(thinking=True)   
     channel_id = get_context_key(interaction)
     resp = await generate_response(channel_id, prompt, attachment=obraz, use_rag=False)
-    await send_chunked_interaction(interaction, resp, ephemeral=False)
+    
+    final_msg = f"{interaction.user.mention}: {prompt}\n\n{resp}"
+    
+    await send_chunked_interaction(interaction, final_msg, ephemeral=False)
+
 
 @bot.tree.command(name="ask", description="Zadaj pytanie (korzysta z bazy wiedzy RAG)")
 @app_commands.describe(question="Twoje pytanie")
 async def slash_ask(interaction: discord.Interaction, question: str):
     await interaction.response.defer(thinking=True)
+    
     channel_id = get_context_key(interaction)
     resp = await generate_response(channel_id, question, attachment=None, use_rag=True)
-    await send_chunked_interaction(interaction, resp, ephemeral=False)
+    final_msg = f"{interaction.user.mention}: {question}\n\n{resp}"
+    await send_chunked_interaction(interaction, final_msg, ephemeral=False)
 
 @bot.tree.command(name="status", description="Pokazuje aktualnie używany model")
 async def slash_status(interaction: discord.Interaction):
@@ -419,8 +430,6 @@ async def slash_reset(interaction: discord.Interaction):
 
 # -------------- Start --------------
 if __name__ == "__main__":
-    DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
-    if not DISCORD_TOKEN:
-        print("Błąd: Brak tokena DISCORD_TOKEN w zmiennych środowiskowych.")
-    else:
-        bot.run(DISCORD_TOKEN)
+
+
+    bot.run('')
